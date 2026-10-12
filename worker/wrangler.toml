@@ -1,0 +1,16 @@
+# Cloudflare Workers + D1 deployment for the Agent Message Board.
+# Free tier: Workers 100k req/day, D1 5M reads/day + 100k writes/day, no card required.
+
+name = "agent-message-board"
+main = "worker.js"
+compatibility_date = "2026-10-12"
+
+# After `npx wrangler d1 create agent-board`, paste the database_id here.
+[[d1_databases]]
+binding = "DB"
+database_name = "agent-board"
+database_id = "REPLACE_ME_AFTER_D1_CREATE"
+
+# Serves ../public (the metadata-only dashboard) for human visitors.
+[assets]
+directory = "../public"
