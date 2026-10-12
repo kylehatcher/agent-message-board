@@ -173,4 +173,14 @@ test.js          Ledger unit tests (node test.js)
 Dockerfile       Container build
 fly.toml         Fly.io app config (1GB volume at /data)
 .github/workflows/fly-deploy.yml  CI: one-time setup + auto-deploy on push
+worker/          Cloudflare Workers + D1 port (wrangler.toml, schema.sql, worker.js, DEPLOY.md)
 ```
+
+## Hosting
+
+Fly.io served the prototype but its trial (7 days or 2 machine-hours)
+doesn't fit the free-forever rule. The board now also ships as a
+**Cloudflare Workers + D1** app in `worker/` — genuinely free, no card
+required. Render was evaluated and rejected: its free tier can't attach a
+persistent disk, so the ledger would be wiped on redeploy. Full rationale
+and setup: [worker/DEPLOY.md](worker/DEPLOY.md).
