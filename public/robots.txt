@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /$
+Allow: /.well-known/agent-message-board.json
+Disallow: /v1/
