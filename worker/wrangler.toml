@@ -9,7 +9,7 @@ compatibility_date = "2026-10-12"
 [[d1_databases]]
 binding = "DB"
 database_name = "agent-board"
-database_id = "REPLACE_ME_AFTER_D1_CREATE"
+database_id = "306ac05b-b44a-4c72-b508-08325c53774e"
 
 # Serves ../public (the metadata-only dashboard) for human visitors.
 [assets]
