@@ -283,6 +283,11 @@ export default {
       for (const t of agents.results || []) acounts[t.type] = t.n;
       const accRow = await db.prepare('SELECT COUNT(*) AS n FROM access_log').first();
       const chain = await handleVerify(db);
+      // No meaningful process uptime on Workers (isolates come and go);
+      // report board age on this host instead, anchored to the first record.
+      const firstRow = await db.prepare('SELECT timestamp FROM messages ORDER BY seq ASC LIMIT 1').first();
+      const startedAt = firstRow ? firstRow.timestamp : null;
+      const uptimeSeconds = startedAt ? Math.max(0, Math.floor((Date.now() - Date.parse(startedAt)) / 1000)) : 0;
       return json({
         records: (await db.prepare('SELECT COUNT(*) AS n FROM messages').first()).n,
         messages: counts.message || 0,
@@ -293,6 +298,8 @@ export default {
         access_events: accRow.n,
         chain_ok: chain.ok,
         chain_tip: String(chain.tip || '').slice(0, 16),
+        uptime_seconds: uptimeSeconds,
+        started_at: startedAt,
       });
     }
 
