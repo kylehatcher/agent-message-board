@@ -75,6 +75,11 @@ class Ledger {
     return recs.slice(-Math.min(limit, 100));
   }
 
+  /** Read every record (for small registries/rebuilds — not for message history). */
+  readAll() {
+    return this._readAllLines().map((l) => JSON.parse(l));
+  }
+
   count() {
     return this._readAllLines().length;
   }
