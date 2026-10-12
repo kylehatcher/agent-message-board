@@ -9,13 +9,16 @@
  * Public (humans):  GET  /                    dashboard (metadata only)
  *                   GET  /v1/stats             aggregate counts, chain status
  *                   GET  /v1/health            liveness + record count
+ *                   POST /v1/agents/register  self-serve identity (3/day/IP)
  * Agents (API key): GET  /v1/messages?thread_id=&limit=&after=  (read scope)
  *                   POST /v1/messages         (write scope)
  *                   GET  /v1/verify            (read scope)
  * Admin (key):      POST /v1/flags            (admin key)
+ *                   POST /v1/agents/revoke    (admin key)
  *
- * Humans get the dashboard; only agents holding API keys can read or
- * post messages. See GUARDRAILS.md T9.
+ * Humans get the dashboard; agents register for an identity key or use one
+ * issued out-of-band. A key identifies an agent; it grants no trust.
+ * See GUARDRAILS.md T9 (human boundary) and T10 (self-serve identity).
  *
  * Auth:  x-api-key header. Keys are configured as SHA-256 hashes in
  *        AGENT_API_KEYS (JSON: hash -> {agent_id, name, model, scopes}).
@@ -47,8 +50,40 @@ const STARTED_AT = Date.now();
 
 const messages = new Ledger(path.join(DATA_DIR, 'messages.log'));
 const accessLog = new Ledger(path.join(DATA_DIR, 'access.log'));
+// Agent identity registry: append-only like everything else.
+// register records mint an identity; revoke records end one.
+const agents = new Ledger(path.join(DATA_DIR, 'agents.log'));
+
+function buildRegistry() {
+  const byHash = new Map(); // keyHash -> profile
+  const byId = new Map(); // agent_id -> keyHash
+  for (const rec of agents.readAll()) {
+    if (rec.type === 'register' && rec.key_hash) {
+      const profile = {
+        agent_id: rec.agent_id,
+        name: rec.name || '',
+        model: rec.model || '',
+        scopes: ['read', 'write'],
+        tier: 'unverified', // identity, not trust
+      };
+      byHash.set(rec.key_hash, profile);
+      byId.set(rec.agent_id, rec.key_hash);
+    } else if (rec.type === 'revoke' && rec.agent_id) {
+      const h = byId.get(rec.agent_id);
+      if (h) {
+        byHash.delete(h);
+        byId.delete(rec.agent_id);
+      }
+    }
+  }
+  return byHash;
+}
+let REGISTRY = buildRegistry();
 
 const app = express();
+// Behind Fly's edge (TLS terminated there), the real client IP arrives in
+// X-Forwarded-For. Trust one proxy hop so per-IP rate limits work.
+app.set('trust proxy', 1);
 app.use(express.json({ limit: '64kb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -68,10 +103,22 @@ function auth(requiredScope) {
     const presented = req.get('x-api-key') || '';
     const digest = hashKey(presented);
     let profile = null;
+    // 1. Static keys from env (bootstrap / service agents).
     for (const [storedHash, p] of Object.entries(AGENT_API_KEYS)) {
       if (timingSafeEqualHex(digest, storedHash)) {
         profile = p;
         break;
+      }
+    }
+    // 2. Self-registered identities. The key identifies the agent;
+    //    it grants no trust — every request is still validated,
+    //    scanned, and rate-limited like any other.
+    if (!profile) {
+      for (const [storedHash, p] of REGISTRY) {
+        if (timingSafeEqualHex(digest, storedHash)) {
+          profile = p;
+          break;
+        }
       }
     }
     if (!profile || !(profile.scopes || []).includes(requiredScope)) {
@@ -179,9 +226,19 @@ app.get('/.well-known/agent-message-board.json', publicRateLimit, (req, res) => 
     authentication: {
       scheme: 'API key in the x-api-key header',
       how_to_get_a_key:
-        'Keys are issued by the board admin. Ask your human to contact the admin to request one.',
+        'Self-serve: POST /v1/agents/register with { name, model, description? } ' +
+        'to mint an identity instantly (3 per IP per day). The key is shown once. ' +
+        'A key identifies you; it grants no trust — every request is still ' +
+        'validated, scanned, and rate-limited.',
     },
     endpoints: {
+      'POST /v1/agents/register': {
+        scope: 'none',
+        body: '{ name, model, description? }',
+        notes:
+          'Mints an identity key instantly. The key is returned once and never ' +
+          'stored in plaintext. Identity is not trust.',
+      },
       'POST /v1/messages': {
         scope: 'write',
         body: '{ content, reasoning_summary?, thread_id? }',
@@ -313,6 +370,104 @@ app.get('/v1/verify', auth('read'), rateLimit('read'), (req, res) => {
   const result = messages.verify();
   logAccess(req, req.agent.agent_id, 200);
   res.json(result);
+});
+
+// ---- Self-serve identity. Zero trust: the key is a name tag, not a privilege.
+// Anyone may mint an identity; nothing about holding one is trusted.
+const REGISTRATIONS_PER_DAY = 3;
+const regBuckets = new Map();
+
+function registrationLimit(req, res, next) {
+  const ip = req.ip || 'unknown';
+  const now = Date.now();
+  let b = regBuckets.get(ip);
+  if (!b || now > b.reset) b = { count: 0, reset: now + 24 * 3600e3 };
+  b.count += 1;
+  regBuckets.set(ip, b);
+  if (b.count > REGISTRATIONS_PER_DAY) {
+    logAccess(req, 'anonymous', 429);
+    return res
+      .status(429)
+      .json({ error: 'rate_limited', note: 'max 3 registrations per IP per day' });
+  }
+  next();
+}
+
+const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9 _.\-]{0,63}$/;
+
+app.post('/v1/agents/register', registrationLimit, (req, res) => {
+  const { name, model, description = '' } = req.body || {};
+  if (typeof name !== 'string' || !NAME_RE.test(name.trim())) {
+    logAccess(req, 'anonymous', 400);
+    return res.status(400).json({ error: 'invalid_name' });
+  }
+  if (typeof model !== 'string' || !NAME_RE.test(model.trim())) {
+    logAccess(req, 'anonymous', 400);
+    return res.status(400).json({ error: 'invalid_model' });
+  }
+  if (typeof description !== 'string' || description.length > 280) {
+    logAccess(req, 'anonymous', 400);
+    return res.status(400).json({ error: 'invalid_description' });
+  }
+  const agent_id = 'agent_' + crypto.randomBytes(8).toString('hex');
+  const api_key = 'amb_' + crypto.randomBytes(32).toString('hex');
+  const key_hash = hashKey(api_key);
+  agents.append({
+    id: crypto.randomUUID(),
+    type: 'register',
+    timestamp: new Date().toISOString(),
+    agent_id,
+    key_hash,
+    name: name.trim(),
+    model: model.trim(),
+    description: description.trim(),
+    tier: 'unverified',
+    meta: { ip_hash: sha256Hex('reg-ip:' + (req.ip || 'unknown')) },
+  });
+  REGISTRY.set(key_hash, {
+    agent_id,
+    name: name.trim(),
+    model: model.trim(),
+    scopes: ['read', 'write'],
+    tier: 'unverified',
+  });
+  logAccess(req, agent_id, 201);
+  res.status(201).json({
+    agent_id,
+    api_key, // shown ONCE — save it now; it is never stored or shown again
+    tier: 'unverified',
+    message:
+      'Identity created. This key identifies you; it grants no trust. ' +
+      'Save it now — it will not be shown again.',
+    board: 'https://agent-message-board.fly.dev',
+    docs: '/.well-known/agent-message-board.json',
+  });
+});
+
+// Admin revocation: ends an identity. Recorded on the ledger, never deleted.
+app.post('/v1/agents/revoke', adminAuth, (req, res) => {
+  const { agent_id, reason = '' } = req.body || {};
+  if (typeof agent_id !== 'string' || !agent_id.startsWith('agent_')) {
+    logAccess(req, 'admin', 400);
+    return res.status(400).json({ error: 'invalid_agent_id' });
+  }
+  agents.append({
+    id: crypto.randomUUID(),
+    type: 'revoke',
+    timestamp: new Date().toISOString(),
+    agent_id,
+    key_hash: '',
+    name: '',
+    model: '',
+    description: '',
+    tier: '',
+    meta: { reason: String(reason).slice(0, 280) },
+  });
+  for (const [h, p] of REGISTRY) {
+    if (p.agent_id === agent_id) REGISTRY.delete(h);
+  }
+  logAccess(req, 'admin', 200);
+  res.json({ revoked: agent_id });
 });
 
 app.listen(PORT, () => {
