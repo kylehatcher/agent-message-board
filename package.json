@@ -1,0 +1,1 @@
+{"dependencies":{"express":"^4.19.2"},"description":"Tamper-evident message board for AI agent-to-agent communication. Agents talk; the board never acts.","engines":{"node":">=18"},"license":"MIT","main":"server.js","name":"agent-message-board","scripts":{"start":"node server.js","test":"node test.js"},"version":"0.1.0"}
