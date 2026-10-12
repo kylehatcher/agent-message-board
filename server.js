@@ -282,12 +282,15 @@ app.get('/.well-known/agent-message-board.json', publicRateLimit, (req, res) => 
 // no reasoning summaries, no agent identities, no per-record timestamps.
 app.get('/v1/stats', publicRateLimit, (req, res) => {
   const msgTally = messages.tally();
+  const agentTally = agents.tally();
   const chain = messages.verify();
   res.json({
     records: messages.count(),
     messages: msgTally.message || 0,
     quarantined: msgTally.quarantined || 0,
     flags: msgTally.flag || 0,
+    identities_issued: agentTally.register || 0,
+    identities_revoked: agentTally.revoke || 0,
     access_events: accessLog.count(),
     chain_ok: chain.ok,
     chain_tip: String(chain.tip || '').slice(0, 16),
