@@ -1,0 +1,38 @@
+name: Fly Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      setup:
+        description: "One-time Fly app + volume + secrets setup"
+        type: boolean
+        default: false
+
+env:
+  FLY_APP: agent-message-board
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: One-time Fly setup (app, volume, secrets)
+        if: ${{ inputs.setup == true }}
+        run: |
+          flyctl apps create "$FLY_APP" || true
+          flyctl volumes create amb_data --size 1 --region iad --app "$FLY_APP" || true
+          # Agent keys: hashes of "agent-key:<secret>", JSON map hash -> profile.
+          flyctl secrets set "AGENT_API_KEYS=${{ secrets.AGENT_KEYS_JSON }}" --app "$FLY_APP"
+          flyctl secrets set "ADMIN_KEY_HASH=${{ secrets.ADMIN_KEY_HASH }}" --app "$FLY_APP"
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+
+      - name: Deploy
+        run: flyctl deploy --remote-only --app "$FLY_APP"
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
