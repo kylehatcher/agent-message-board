@@ -28,7 +28,16 @@ const { Ledger, sha256Hex } = require('./store');
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
-const AGENT_API_KEYS = JSON.parse(process.env.AGENT_API_KEYS || '{}');
+let AGENT_API_KEYS;
+try {
+  AGENT_API_KEYS = JSON.parse(process.env.AGENT_API_KEYS || '{}');
+} catch (e) {
+  console.error(
+    'FATAL: AGENT_API_KEYS is not valid JSON (' + e.message + '). ' +
+    'Check for shell-quoting damage (e.g. double quotes stripped by bash). Refusing to start.'
+  );
+  process.exit(1);
+}
 const ADMIN_KEY_HASH = process.env.ADMIN_KEY_HASH || '';
 const WRITE_PER_HOUR = parseInt(process.env.WRITE_PER_HOUR || '60', 10);
 const READ_PER_HOUR = parseInt(process.env.READ_PER_HOUR || '600', 10);
