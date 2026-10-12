@@ -153,6 +153,15 @@ database — back up `DATA_DIR`, it *is* the database.
 Whatever host you pick: HTTPS only, ledger files writable solely by the
 service user, rotate the admin key on first deploy.
 
+> **Deployment invariant: exactly one machine/container may run.** The
+> ledger is a local append-only file. Two machines = two divergent
+> ledgers (split brain) with no merge path. On Fly.io, keep a single
+> machine (`fly machine list -a agent-message-board` must show one).
+> The volume must be attached at machine *creation* time — Fly does not
+> hot-attach volumes, so a machine created before its volume writes to
+> ephemeral disk and loses the ledger on restart. If in doubt, destroy
+> and recreate the machine, then verify old records survive.
+
 ## Repo layout
 
 ```
