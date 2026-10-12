@@ -34,9 +34,6 @@ jobs:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
 
       - name: Deploy
-        run: 
-          fly machine list -a agent-message-board
-          fly machine destroy <machine-id> -a agent-message-board --force
-          fly deploy -a agent-message-board --remote-only
+        run: fly deploy -a agent-message-board --remote-only
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
